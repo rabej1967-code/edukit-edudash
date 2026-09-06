@@ -274,10 +274,7 @@ input[type=file].finp{display:none}
         </div>
         <div class="afu-ig">
           <div class="afu-label">Kata Laluan</div>
-          <div style="position:relative">
-            <input class="afu-input" id="afu-pass" type="password" placeholder="kata laluan" style="width:100%;padding-right:36px">
-            <button onclick="toggleApPw()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:#94A3B8">👁</button>
-          </div>
+          <div style="font-size:11px;color:#94a3b8;padding:8px 0">Dijana automatik (random) — dipaparkan selepas simpan.</div>
         </div>
         <div class="afu-ig">
           <div class="afu-label">Peranan (Role)</div>
@@ -836,6 +833,82 @@ input[type=file].finp{display:none}
   <div class="bni" onclick="sp('eksport',this)"><div class="bni-ic">📄</div><div class="bni-lb">Eksport</div></div>
 </div>
 <script>
+// ══════════════════════════════════════════════
+// SUPABASE CONFIG + TENANT (SEKOLAH)
+// ══════════════════════════════════════════════
+var SB_URL='https://aowzftmdriukxbltjtpm.supabase.co';
+var SB_ANON_KEY='PASTE_ANON_KEY_DI_SINI'; // <-- ganti dengan anon key projek Supabase
+var SB_FN_ADMIN=SB_URL+'/functions/v1/edudash-admin';
+var urlParams=new URLSearchParams(window.location.search);
+var KOD_SEKOLAH=(urlParams.get('t')||'').trim().toUpperCase();
+function sbMakeEmail(username,kodSekolah){
+  var u=(username||'').trim().toLowerCase().replace(/[^a-z0-9_.]/g,'');
+  var k=(kodSekolah||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  return u+'.'+k+'@cikgukita.internal';
+}
+var ED_SESS=null, ED_CU=null;
+var ED_SKEY='ed_sess_v1_'+(KOD_SEKOLAH||'nokod');
+function loadEDSess(){try{return JSON.parse(localStorage.getItem(ED_SKEY))}catch(e){return null}}
+function saveEDSess(){localStorage.setItem(ED_SKEY,JSON.stringify(ED_SESS))}
+function clearEDSess(){localStorage.removeItem(ED_SKEY)}
+async function sbFetch(path,opts){
+  opts=opts||{};
+  var headers=Object.assign({'apikey':SB_ANON_KEY,'Content-Type':'application/json'},opts.headers||{});
+  headers['Authorization']='Bearer '+((ED_SESS&&ED_SESS.access_token)?ED_SESS.access_token:SB_ANON_KEY);
+  return fetch(SB_URL+path,Object.assign({},opts,{headers:headers}));
+}
+async function edAdmFn(action,payload){
+  var res=await fetch(SB_FN_ADMIN,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+ED_SESS.access_token,'apikey':SB_ANON_KEY},
+    body:JSON.stringify(Object.assign({action:action},payload||{}))
+  });
+  var d=await res.json();
+  if(!res.ok) throw new Error(d.error||'Ralat pelayan');
+  return d;
+}
+var _edSaveTimer=null;
+function edScheduleSave(){ clearTimeout(_edSaveTimer); _edSaveTimer=setTimeout(edSaveSchoolData,1200); }
+function edCollectFields(){
+  var out={};
+  document.querySelectorAll('.ic input, .ic select, .ic textarea').forEach(function(el){
+    if(el.id) out[el.id]=el.value;
+  });
+  return out;
+}
+function edRestoreFields(fields){
+  if(!fields) return;
+  Object.keys(fields).forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.value=fields[id];
+  });
+}
+async function edSaveSchoolData(){
+  if(!ED_CU) return;
+  try{
+    await sbFetch('/rest/v1/edudash_school_data?kod_sekolah=eq.'+KOD_SEKOLAH, {
+      method:'PATCH', headers:{'Prefer':'return=minimal'},
+      body: JSON.stringify({school: S.school, fields: edCollectFields()})
+    });
+  }catch(e){}
+}
+async function edLoadSchoolData(){
+  try{
+    var res = await sbFetch('/rest/v1/edudash_school_data?kod_sekolah=eq.'+KOD_SEKOLAH+'&select=school,fields', {method:'GET'});
+    if(res.ok){
+      var rows = await res.json();
+      if(rows.length){
+        if(rows[0].school && Object.keys(rows[0].school).length) Object.assign(S.school, rows[0].school);
+        edRestoreFields(rows[0].fields);
+      } else {
+        await sbFetch('/rest/v1/edudash_school_data', {
+          method:'POST', headers:{'Prefer':'return=minimal'},
+          body: JSON.stringify({kod_sekolah: KOD_SEKOLAH, school: S.school, fields: {}})
+        });
+      }
+    }
+  }catch(e){}
+}
 Chart.register(ChartDataLabels);
 const CH={},DLS={id:null};
 const S={school:{name:"SK / SMK Nama Sekolah",sub:"Dashboard Pelajar 2024",logo:null,daerah:"",kod:"",pengetua:"",jenis:"SK",gred:"Gred A",alamat:""},gs:"bar"};
@@ -876,7 +949,28 @@ function saveModal(){
   document.getElementById("dispName").textContent=S.school.name;
   document.getElementById("dispSub").textContent=S.school.sub;
   document.getElementById("splashName").textContent=S.school.name;
+  edScheduleSave();
   closeModal();buildAlerts();
+}
+function edForcePwScreen(){
+  var lw=document.getElementById('loginWrap');
+  var card=lw.querySelector('.lcard')||lw.querySelector('div');
+  card.innerHTML='<div style="font-size:17px;font-weight:800;margin-bottom:6px">Set Kata Laluan Baru</div>'+
+    '<div style="font-size:12.5px;color:#64748b;margin-bottom:14px">Kali pertama log masuk — sila tetapkan kata laluan baru.</div>'+
+    '<input id="fpwNew" type="password" placeholder="Kata laluan baru (min. 6 aksara)" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:10px">'+
+    '<input id="fpwConf" type="password" placeholder="Sahkan kata laluan" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:14px">'+
+    '<button onclick="edForcePwSubmit()" style="width:100%;padding:11px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer">Simpan &amp; Teruskan &rarr;</button>'+
+    '<div id="fpwErr" style="color:#ef4444;font-size:12px;margin-top:8px"></div>';
+}
+async function edForcePwSubmit(){
+  var nw=document.getElementById('fpwNew').value, cf=document.getElementById('fpwConf').value;
+  var err=document.getElementById('fpwErr');
+  if(nw.length<6){err.textContent='Min. 6 aksara.';return}
+  if(nw!==cf){err.textContent='Tidak sepadan.';return}
+  var res=await sbFetch('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nw})});
+  if(!res.ok){err.textContent='Gagal tukar. Cuba lagi.';return}
+  await sbFetch('/rest/v1/edudash_users?user_id=eq.'+ED_SESS.user_id,{method:'PATCH',headers:{'Prefer':'return=minimal'},body:JSON.stringify({must_change_password:false})});
+  location.reload();
 }
 function handleLogo(e){
   const file=e.target.files[0];if(!file)return;
@@ -971,7 +1065,20 @@ function dlCSV(){
 function dlSpdf(){
   const ch=CH[DLS.id];if(!ch)return;const title=gt(DLS.id)||DLS.id;
   const lh=S.school.logo?`<img src="${S.school.logo}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;margin-right:10px;border:2px solid #0F766E">`:"<span style=\"font-size:28px;margin-right:10px\">🏫</span>";
-  const h=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#0C3B6E}.hdr{border-bottom:2px solid #0F766E;padding-bottom:10px;margin-bottom:20px;display:flex;align-items:center}h1{font-size:15px;margin:0}p{font-size:11px;color:#64748B;margin:4px 0 0}img.ci{max-width:100%;border-radius:8px;border:1px solid #e2e8f0}</style></head><body><div class="hdr">${lh}<div><h1>${S.school.name}</h1><p>${title} · ${new Date().toLocaleDateString("ms-MY",{day:"2-digit",month:"long",year:"numeric"})}</p></div></div><img class="ci" src="${ch.toBase64Image()}"></body></html>`;
+  const h=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#0C3B6E}.hdr{border-bottom:2px solid #0F766E;padding-bottom:10px;margin-bottom:20px;display:flex;align-items:center}h1{font-size:15px;margin:0}p{font-size:11px;color:#64748B;margin:4px 0 0}img.ci{max-width:100%;border-radius:8px;border:1px solid #e2e8f0}</style></head><body><div class="hdr">${lh}<div><h1>${S.school.name}</h1><p>${title} · ${new Date().toLocaleDateString("ms-MY",{day:"2-digit",month:"long",year:"numeric"})}</p></div></div><img class="ci" src="${ch.toBase64Image()}"><script>
+// ── KEEP-ALIVE — pastikan Supabase tidak tidur ──────────────
+(function(){
+  var _kaUrl = typeof SUPA_URL !== 'undefined' ? SUPA_URL : (typeof SB_URL !== 'undefined' ? SB_URL : '');
+  var _kaKey = typeof SUPA_KEY !== 'undefined' ? SUPA_KEY : (typeof SB_KEY !== 'undefined' ? SB_KEY : '');
+  if (!_kaUrl || !_kaKey) return;
+  if (window._ekKaTimer) clearInterval(window._ekKaTimer);
+  window._ekKaTimer = setInterval(function(){
+    fetch(_kaUrl+'/rest/v1/', {headers:{'apikey':_kaKey,'Authorization':'Bearer '+_kaKey}}).catch(function(){});
+  }, 4*60*1000);
+  console.log('EduKit keep-alive started');
+})();
+</script>
+</body></html>`;
   const w=window.open("","_blank");w.document.write(h);w.document.close();setTimeout(()=>w.print(),600);closeDL();
 }
 
@@ -1239,61 +1346,78 @@ function exportPDF(){
 doAdmin();doHEM();doKUR();doKOKO();
 </script>
 <script>
-// ══ USER STORE (localStorage) ══
-const STORE_KEY = 'edudash_users';
-const SESSION_KEY = 'edudash_session';
-
-function getUsers() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || defaultUsers(); }
-  catch(e) { return defaultUsers(); }
+// ══ AUTH (Supabase Auth + RLS) ══
+async function edFetchProfile(){
+  try{
+    var res=await sbFetch('/rest/v1/edudash_users?select=username,fullname,role,kod_sekolah,must_change_password&user_id=eq.'+ED_SESS.user_id,{method:'GET'});
+    if(!res.ok) return false;
+    var rows=await res.json();
+    if(!rows.length) return false;
+    ED_CU=rows[0];
+    return true;
+  }catch(e){ return false; }
 }
-function saveUsers(users) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(users));
+async function edRefreshToken(){
+  if(!ED_SESS||!ED_SESS.refresh_token) return false;
+  var res=await sbFetch('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:ED_SESS.refresh_token})});
+  if(!res.ok) return false;
+  var d=await res.json();
+  ED_SESS={access_token:d.access_token,refresh_token:d.refresh_token,user_id:d.user.id};
+  saveEDSess();
+  return true;
 }
-function defaultUsers() {
-  const users = [
-    { id:'u1', nama:'Administrator', username:'admin', password:'admin123', role:'admin', jawatan:'Pentadbir Sistem', email:'' },
-    { id:'u2', nama:'Pengguna Demo', username:'demo', password:'demo123', role:'view', jawatan:'Guru', email:'' }
-  ];
-  saveUsers(users);
-  return users;
+async function edBoot(){
+  if(!KOD_SEKOLAH){
+    document.getElementById('lf-err').textContent='URL tiada kod sekolah (?t=KODSEKOLAH). Hubungi admin.';
+    document.getElementById('lf-err').style.display='block';
+    return;
+  }
+  ED_SESS=loadEDSess();
+  if(ED_SESS&&ED_SESS.access_token){
+    if(await edFetchProfile()){ await edEnterApp(); return; }
+    if(await edRefreshToken()&&await edFetchProfile()){ await edEnterApp(); return; }
+  }
+  clearEDSess(); ED_SESS=null; ED_CU=null;
 }
-function getSession() {
-  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); }
-  catch(e) { return null; }
-}
-function setSession(user) {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify({id:user.id, nama:user.nama, username:user.username, role:user.role, jawatan:user.jawatan}));
-}
-function clearSession() {
-  sessionStorage.removeItem(SESSION_KEY);
-}
-
-// ══ LOGIN ══
-function doLogin() {
+async function doLogin() {
   const uInput = document.getElementById('lf-user').value.trim();
   const pInput = document.getElementById('lf-pass').value;
   const errEl = document.getElementById('lf-err');
-  const users = getUsers();
-  const found = users.find(u => u.username === uInput && u.password === pInput);
-  if (!found) {
-    errEl.style.display = 'block';
-    document.getElementById('lf-user').classList.add('err');
-    document.getElementById('lf-pass').classList.add('err');
-    setTimeout(() => {
-      errEl.style.display = 'none';
-      document.getElementById('lf-user').classList.remove('err');
-      document.getElementById('lf-pass').classList.remove('err');
-    }, 3000);
-    return;
-  }
-  setSession(found);
+  if(!KOD_SEKOLAH){ errEl.textContent='URL tiada kod sekolah (?t=KODSEKOLAH).'; errEl.style.display='block'; return; }
+  if(!uInput||!pInput){ errEl.style.display = 'block'; return; }
+  var email=sbMakeEmail(uInput,KOD_SEKOLAH);
+  try{
+    var res=await sbFetch('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:email,password:pInput})});
+    if(!res.ok){
+      errEl.textContent='Nama pengguna atau kata laluan tidak sah.';
+      errEl.style.display = 'block';
+      document.getElementById('lf-user').classList.add('err');
+      document.getElementById('lf-pass').classList.add('err');
+      setTimeout(() => {
+        errEl.style.display = 'none';
+        document.getElementById('lf-user').classList.remove('err');
+        document.getElementById('lf-pass').classList.remove('err');
+      }, 3000);
+      return;
+    }
+    var d=await res.json();
+    ED_SESS={access_token:d.access_token,refresh_token:d.refresh_token,user_id:d.user.id};
+    saveEDSess();
+    if(!await edFetchProfile()){ errEl.textContent='Akaun wujud tapi profil tidak dijumpai. Hubungi admin.'; errEl.style.display='block'; return; }
+    errEl.style.display='none';
+    if(ED_CU.must_change_password){ edForcePwScreen(); return; }
+    document.getElementById('loginWrap').classList.add('hide');
+    await edEnterApp();
+  }catch(e){ errEl.textContent='Ralat sambungan.'; errEl.style.display='block'; }
+}
+async function edEnterApp(){
+  await edLoadSchoolData();
   document.getElementById('loginWrap').classList.add('hide');
-  applySession(found);
+  applySession(ED_CU);
 }
 function doLogout() {
   if (!confirm('Adakah anda pasti ingin log keluar?')) return;
-  clearSession();
+  clearEDSess(); ED_SESS=null; ED_CU=null;
   location.reload();
 }
 function applySession(user) {
@@ -1307,7 +1431,7 @@ function applySession(user) {
   const sub = document.getElementById('dispSub');
   if (sub) {
     const lbl = user.role === 'admin' ? '👑 Admin' : user.role === 'view' ? '👁 Tontonan' : '✏ Edit';
-    sub.textContent = (user.nama || '') + ' · ' + lbl;
+    sub.textContent = (user.fullname || user.username || '') + ' · ' + lbl;
   }
 
   // View-only: lock everything
@@ -1370,19 +1494,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loginBtn')?.addEventListener('click', doLogin);
   document.getElementById('lf-pass')?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('lf-user')?.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('lf-pass').focus(); });
-  // Check existing session
-  const sess = getSession();
-  if (sess) {
-    document.getElementById('loginWrap').classList.add('hide');
-    applySession(sess);
-  } else {
-    // Show school logo on login page if set
-    const li = document.getElementById('loginSlogo');
-    if (li && S && S.school && S.school.logo) {
-      li.src = S.school.logo;
-      li.style.display = 'block';
-    }
-  }
+  // Auto-save dashboard field changes (debounced)
+  document.querySelectorAll('.ic input, .ic select, .ic textarea').forEach(function(el){
+    el.addEventListener('change', function(){ edScheduleSave(); });
+  });
+  edBoot();
 });
 
 function togglePw() {
@@ -1395,11 +1511,10 @@ function toggleApPw() {
   inp.type = inp.type === 'password' ? 'text' : 'password';
 }
 
-// ══ ADMIN PANEL ══
-function openAdminPanel() {
-  const sess = getSession();
-  if (!sess || sess.role !== 'admin') { alert('Akses Admin sahaja!'); return; }
-  renderUserList();
+// ══ ADMIN PANEL (guna Edge Function edudash-admin) ══
+async function openAdminPanel() {
+  if (!ED_CU || ED_CU.role !== 'admin') { alert('Akses Admin sahaja!'); return; }
+  await renderUserList();
   document.getElementById('adminPanel').classList.add('open');
 }
 function closeAdminPanel() {
@@ -1407,88 +1522,72 @@ function closeAdminPanel() {
   clearUserForm();
 }
 
-function renderUserList() {
-  const users = getUsers();
-  const sess = getSession();
-  document.getElementById('userList').innerHTML = users.map(u => `
-    <div class="user-item ${u.role === 'admin' ? 'admin-user' : ''}">
-      <div class="ui-icon">${u.role === 'admin' ? '👑' : u.role === 'view' ? '👁' : '✏'}</div>
-      <div class="ui-info">
-        <div class="ui-name">${u.nama} <span class="role-badge ${u.role === 'admin' ? 'rb-admin' : u.role === 'view' ? 'rb-view' : 'rb-user'}">${u.role === 'admin' ? 'Admin' : u.role === 'view' ? 'Tontonan' : 'Pengguna'}</span></div>
-        <div class="ui-role">@${u.username}${u.jawatan ? ' · ' + u.jawatan : ''}${u.email ? ' · ' + u.email : ''}</div>
+async function renderUserList() {
+  const el = document.getElementById('userList');
+  el.innerHTML = '<div style="font-size:11px;color:#94a3b8">Memuatkan...</div>';
+  try{
+    const d = await edAdmFn('list_users');
+    el.innerHTML = d.users.map(u => `
+      <div class="user-item ${u.role === 'admin' ? 'admin-user' : ''}">
+        <div class="ui-icon">${u.role === 'admin' ? '👑' : '👁'}</div>
+        <div class="ui-info">
+          <div class="ui-name">${u.fullname||u.username} <span class="role-badge ${u.role === 'admin' ? 'rb-admin' : 'rb-view'}">${u.role === 'admin' ? 'Admin' : 'Tontonan'}</span></div>
+          <div class="ui-role">@${u.username}${u.must_change_password ? ' · <span style="color:#f59e0b">belum set pasword</span>' : ''}</div>
+        </div>
+        <div class="ui-actions">
+          <button class="ui-btn ui-edit" onclick="editUser('${u.username}','${(u.fullname||'').replace(/'/g,"\\'")}','${u.role}')">✏</button>
+          ${u.username===ED_CU.username?'':`<button class="ui-btn ui-del" onclick="deleteUser('${u.username}')">🗑</button>`}
+        </div>
       </div>
-      <div class="ui-actions">
-        <button class="ui-btn ui-edit" onclick="editUser('${u.id}')">✏</button>
-        <button class="ui-btn ui-del" onclick="deleteUser('${u.id}')" ${u.id === sess?.id ? 'disabled title="Tidak boleh padam akaun sendiri"' : ''}>🗑</button>
-      </div>
-    </div>
-  `).join('');
+    `).join('');
+  }catch(e){ el.innerHTML = '<div style="color:#ef4444;font-size:11px">Ralat: '+e.message+'</div>'; }
 }
 
-function saveUser() {
+async function saveUser() {
   const nama = document.getElementById('afu-nama').value.trim();
   const username = document.getElementById('afu-user').value.trim();
-  const password = document.getElementById('afu-pass').value;
   const role = document.getElementById('afu-role').value;
-  const jawatan = document.getElementById('afu-jawatan').value.trim();
-  const email = document.getElementById('afu-email').value.trim();
   const editing = document.getElementById('afu-editing').value;
-  const msg = document.getElementById('apMsg');
 
   if (!nama || !username) {
     showApMsg('❌ Nama penuh dan nama pengguna wajib diisi.', 'err'); return;
   }
-  const users = getUsers();
-  const dupUser = users.find(u => u.username === username && u.id !== editing);
-  if (dupUser) { showApMsg('❌ Nama pengguna sudah digunakan.', 'err'); return; }
-
-  if (editing) {
-    const idx = users.findIndex(u => u.id === editing);
-    if (idx !== -1) {
-      users[idx] = { ...users[idx], nama, username, role, jawatan, email };
-      if (password) users[idx].password = password;
+  try{
+    if (editing) {
+      await edAdmFn('update_user', {username: editing, fullname: nama, role: role});
+      showApMsg('✅ Pengguna berjaya dikemaskini!', 'ok');
+    } else {
+      const d = await edAdmFn('create_user', {username: username, fullname: nama, role: role});
+      showApMsg('✅ Pengguna dicipta! Pasword sementara: '+d.password+' (wajib ditukar bila log masuk pertama)', 'ok');
     }
-    showApMsg('✅ Pengguna berjaya dikemaskini!', 'ok');
-  } else {
-    if (!password) { showApMsg('❌ Kata laluan wajib diisi untuk pengguna baru.', 'err'); return; }
-    users.push({ id: 'u' + Date.now(), nama, username, password, role, jawatan, email });
-    showApMsg('✅ Pengguna berjaya ditambah!', 'ok');
-  }
-  saveUsers(users);
-  renderUserList();
-  clearUserForm();
+    await renderUserList();
+    clearUserForm();
+  }catch(e){ showApMsg('❌ '+e.message, 'err'); }
 }
 
-function editUser(id) {
-  const users = getUsers();
-  const u = users.find(x => x.id === id);
-  if (!u) return;
-  document.getElementById('afu-nama').value = u.nama;
-  document.getElementById('afu-user').value = u.username;
-  document.getElementById('afu-pass').value = '';
-  document.getElementById('afu-role').value = u.role;
-  document.getElementById('afu-jawatan').value = u.jawatan || '';
-  document.getElementById('afu-email').value = u.email || '';
-  document.getElementById('afu-editing').value = u.id;
+function editUser(username, fullname, role) {
+  document.getElementById('afu-nama').value = fullname;
+  document.getElementById('afu-user').value = username;
+  document.getElementById('afu-role').value = role;
+  document.getElementById('afu-editing').value = username;
   document.getElementById('apMsg').style.display = 'none';
   document.querySelector('.ap-add-btn').textContent = '💾 Kemaskini Pengguna';
   document.getElementById('afu-nama').scrollIntoView({behavior:'smooth', block:'center'});
 }
 
-function deleteUser(id) {
-  const sess = getSession();
-  if (id === sess?.id) { alert('Tidak boleh memadam akaun anda sendiri!'); return; }
+async function deleteUser(username) {
+  if (username === ED_CU?.username) { alert('Tidak boleh memadam akaun anda sendiri!'); return; }
   if (!confirm('Adakah anda pasti ingin memadam pengguna ini?')) return;
-  let users = getUsers();
-  users = users.filter(u => u.id !== id);
-  saveUsers(users);
-  renderUserList();
-  showApMsg('✅ Pengguna berjaya dipadam.', 'ok');
+  try{
+    await edAdmFn('delete_user', {username: username});
+    await renderUserList();
+    showApMsg('✅ Pengguna berjaya dipadam.', 'ok');
+  }catch(e){ showApMsg('❌ '+e.message, 'err'); }
 }
 
 function clearUserForm() {
-  ['afu-nama','afu-user','afu-pass','afu-jawatan','afu-email'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-  document.getElementById('afu-role').value = 'user';
+  ['afu-nama','afu-user','afu-jawatan','afu-email'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  document.getElementById('afu-role').value = 'view';
   document.getElementById('afu-editing').value = '';
   document.querySelector('.ap-add-btn').textContent = '💾 Simpan Pengguna';
 }
@@ -1496,6 +1595,6 @@ function clearUserForm() {
 function showApMsg(txt, type) {
   const el = document.getElementById('apMsg');
   el.textContent = txt; el.className = 'ap-msg ' + type; el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 3500);
+  setTimeout(() => { el.style.display = 'none'; }, 4500);
 }
 </script></body></html>
